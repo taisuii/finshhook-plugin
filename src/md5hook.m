@@ -18,7 +18,7 @@ static UILabel *statusLabel = nil;
 static UIButton *pauseButton = nil;
 static UIButton *minimizeButton = nil;
 static UILabel *pathLabel = nil;
-static CGRect originalWindowFrame = {{0, 0, 0, 0}};
+static CGRect originalWindowFrame = {0, 0, 0, 0};
 static UIView *titleBarView = nil;
 
 // ---------- 日志文件保存函数 ----------
@@ -197,7 +197,7 @@ static void append_log(NSString *message) {
     isMinimized = !isMinimized;
 
     // 保存原始尺寸和位置，第一次最小化时
-    if (!isMinimized && CGRectIsNull(originalWindowFrame)) {
+    if (!isMinimized && (originalWindowFrame.size.width == 0 || originalWindowFrame.size.height == 0)) {
         originalWindowFrame = self.frame;
     }
 
@@ -219,7 +219,7 @@ static void append_log(NSString *message) {
         }
     } else {
         // 恢复
-        if (!CGRectIsNull(originalWindowFrame)) {
+        if (originalWindowFrame.size.width != 0 && originalWindowFrame.size.height != 0) {
             [UIView animateWithDuration:animationDuration animations:^{
                 self.frame = originalWindowFrame;
             }];

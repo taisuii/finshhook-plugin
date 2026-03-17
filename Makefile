@@ -10,6 +10,7 @@ CFLAGS  := -arch $(ARCH) \
            -dynamiclib \
            -framework Foundation \
            -framework UIKit \
+           -framework CoreGraphics \
            -ObjC \
            -Os
 
