@@ -13,8 +13,13 @@ static UIWindow *floatWindow = nil;
 static UITextView *logTextView = nil;
 static BOOL isWindowHidden = NO;
 static BOOL isPaused = NO;
+static BOOL isMinimized = NO;
 static UILabel *statusLabel = nil;
 static UIButton *pauseButton = nil;
+static UIButton *minimizeButton = nil;
+static UILabel *pathLabel = nil;
+static CGRect originalWindowFrame = {{0, 0, 0, 0}};
+static UIView *titleBarView = nil;
 
 // ---------- 日志文件保存函数 ----------
 static NSString *get_log_file_path(void) {
@@ -75,7 +80,7 @@ static NSString *hex_dump_format(NSData *data) {
     return result;
 }
 
-static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexStr, NSString *md5, NSData *inputData) {
+static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexStr, NSString *md5, NSData *inputData, NSString *callStack) {
     NSString *logPath = get_log_file_path();
 
     // 格式化日志条目
@@ -90,7 +95,11 @@ static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexSt
     [entry appendString:@"HexDump (格式):\n"];
     [entry appendFormat:@"%@\n", hex_dump_format(inputData)];
     [entry appendString:@"MD5结果:\n"];
-    [entry appendFormat:@"%@\n\n", md5];
+    [entry appendFormat:@"%@\n", md5];
+    if (callStack.length > 0) {
+        [entry appendFormat:@"调用堆栈:\n%@", callStack];
+    }
+    [entry appendString:@"\n\n"];
 
     // 写入文件（追加模式）
     NSError *error = nil;
@@ -140,6 +149,7 @@ static void append_log(NSString *message) {
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g;
 - (void)clearLog;
 - (void)togglePause;
+- (void)toggleMinimize;
 @end
 
 @implementation UIWindow (MD5Hook)
@@ -182,6 +192,53 @@ static void append_log(NSString *message) {
         append_log(@"日志已继续");
     }
 }
+
+- (void)toggleMinimize {
+    isMinimized = !isMinimized;
+
+    // 保存原始尺寸和位置，第一次最小化时
+    if (!isMinimized && CGRectIsNull(originalWindowFrame)) {
+        originalWindowFrame = self.frame;
+    }
+
+    CGFloat animationDuration = 0.3;
+
+    if (isMinimized) {
+        // 最小化 - 只保留标题栏高度
+        [UIView animateWithDuration:animationDuration animations:^{
+            self.frame = CGRectMake(self.frame.origin.x,
+                                  self.frame.origin.y,
+                                  self.frame.size.width,
+                                  50); // 只保留标题栏
+        }];
+
+        // 隐藏内容区域
+        [logTextView setAlpha:0];
+        if (pathLabel) {
+            [pathLabel setAlpha:0];
+        }
+    } else {
+        // 恢复
+        if (!CGRectIsNull(originalWindowFrame)) {
+            [UIView animateWithDuration:animationDuration animations:^{
+                self.frame = originalWindowFrame;
+            }];
+
+            // 显示内容区域
+            [logTextView setAlpha:1];
+            if (pathLabel) {
+                [pathLabel setAlpha:1];
+            }
+        }
+    }
+
+    if (minimizeButton) {
+        [minimizeButton setTitle:isMinimized ? @"恢复" : @"最小化" forState:UIControlStateNormal];
+        minimizeButton.backgroundColor = isMinimized ?
+            [UIColor colorWithRed:0.5 green:0.5 blue:0.8 alpha:1.0] :
+            [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+    }
+}
 @end
 
 // ---------- 设置悬浮窗 ----------
@@ -197,6 +254,7 @@ static void setup_float_window(void) {
 
         // 创建悬浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(windowX, windowY, windowWidth, windowHeight)];
+        originalWindowFrame = floatWindow.frame;
         floatWindow.windowLevel = UIWindowLevelAlert + 1000;
         floatWindow.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.95];
         floatWindow.layer.cornerRadius = 12;
@@ -207,6 +265,7 @@ static void setup_float_window(void) {
         // 添加标题栏
         UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, windowWidth, 50)];
         titleBar.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+        titleBarView = titleBar;
         [floatWindow addSubview:titleBar];
 
         // 标题标签
@@ -222,6 +281,17 @@ static void setup_float_window(void) {
         statusLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
         statusLabel.font = [UIFont systemFontOfSize:9];
         [titleBar addSubview:statusLabel];
+
+        // 最小化按钮
+        minimizeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        minimizeButton.frame = CGRectMake(windowWidth - 200, 5, 45, 20);
+        [minimizeButton setTitle:@"最小化" forState:UIControlStateNormal];
+        [minimizeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        minimizeButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+        minimizeButton.backgroundColor = [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+        minimizeButton.layer.cornerRadius = 4;
+        [minimizeButton addTarget:floatWindow action:@selector(toggleMinimize) forControlEvents:UIControlEventTouchUpInside];
+        [titleBar addSubview:minimizeButton];
 
         // 暂停按钮
         pauseButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -247,7 +317,7 @@ static void setup_float_window(void) {
 
         // 路径标签 - 显示在悬浮窗底部
         NSString *logPath = get_log_file_path();
-        UILabel *pathLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, windowHeight - 20, windowWidth - 10, 15)];
+        pathLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, windowHeight - 20, windowWidth - 10, 15)];
         pathLabel.text = [NSString stringWithFormat:@"📁 %@", logPath];
         pathLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
         pathLabel.font = [UIFont fontWithName:@"Menlo" size:8];
@@ -296,8 +366,8 @@ static void setup_float_window(void) {
 
 // ---------- Hook CC_MD5（一次性计算，最常见） ----------
 static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char *md) {
-    // 过滤短输入（低于 48 字节不 Hook）
-    if (len < 48) {
+    // 过滤短输入（低于 72 字节不 Hook）
+    if (len < 72) {
         return orig_CC_MD5(data, len, md);
     }
 
@@ -322,14 +392,27 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
                                                            dateStyle:NSDateFormatterNoStyle
                                                            timeStyle:NSDateFormatterMediumStyle];
 
+    // 获取调用堆栈
+    NSArray *stackSymbols = [NSThread callStackSymbols];
+    NSMutableString *callStack = [NSMutableString string];
+    for (NSString *symbol in stackSymbols) {
+        // 过滤掉系统框架的调用，只保留应用的
+        if ([symbol containsString:@"/var/mobile/Containers"]) {
+            [callStack appendFormat:@"%@\n", symbol];
+        }
+    }
+
     // 始终保存到文件（即使暂停也保存）
-    save_to_file(timestamp, inputStr, hexStr, hex, inputData);
+    save_to_file(timestamp, inputStr, hexStr, hex, inputData, callStack);
 
     // 只有未暂停时才显示到悬浮窗
     if (!isPaused) {
         append_log([NSString stringWithFormat:@"IN UTF-8 (len=%u): %@", len, inputStr]);
         append_log([NSString stringWithFormat:@"IN HEX   (len=%u): %@", len, hexStr]);
         append_log([NSString stringWithFormat:@"MD5 RESULT: %@", hex]);
+        if (callStack.length > 0) {
+            append_log([NSString stringWithFormat:@"CALL STACK:\n%@", callStack]);
+        }
         append_log(@"───────────────────────────────");
     }
 
