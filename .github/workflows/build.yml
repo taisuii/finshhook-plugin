@@ -1,0 +1,60 @@
+name: Build MD5 Hook Dylib
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: '目标 IPA 的下载链接（可选，填写后自动注入）'
+        required: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      # 1. 拉代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. 下载 fishhook 原版文件（直接从 Facebook 官方拉）
+      - name: Fetch fishhook
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.h \
+               -o src/fishhook.h
+          curl -fsSL https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.c \
+               -o src/fishhook.c
+
+      # 3. 编译 dylib
+      - name: Build dylib
+        run: make
+
+      # 4. （可选）如果传入了 IPA URL，自动注入
+      - name: Install insert_dylib
+        if: ${{ github.event.inputs.ipa_url != '' }}
+        run: |
+          brew install insert_dylib 2>/dev/null || \
+          git clone https://github.com/Tyilo/insert_dylib.git /tmp/insert_dylib && \
+          cd /tmp/insert_dylib && make && cp build/insert_dylib /usr/local/bin/
+
+      - name: Download & Inject IPA
+        if: ${{ github.event.inputs.ipa_url != '' }}
+        run: |
+          curl -fSL "${{ github.event.inputs.ipa_url }}" -o input.ipa
+          chmod +x scripts/inject.sh
+          ./scripts/inject.sh input.ipa hook_md5.dylib
+
+      # 5. 上传产物
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook_md5_dylib
+          path: hook_md5.dylib
+
+      - name: Upload injected IPA
+        if: ${{ github.event.inputs.ipa_url != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hooked_ipa
+          path: hooked_*.ipa
