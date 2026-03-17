@@ -47,7 +47,7 @@ static void append_log(NSString *message) {
         CGPoint delta = [g translationInView:self.superview ?: self];
         self.center = CGPointMake(self.center.x + delta.x,
                                   self.center.y + delta.y);
-        [g setTranslation:CGPointZero inView:self.superview ?: self];
+        [g setTranslation:CGPointMake(0, 0) inView:self.superview ?: self];
     }
 }
 
