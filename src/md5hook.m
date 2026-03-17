@@ -13,6 +13,62 @@ static UIWindow *floatWindow = nil;
 static UITextView *logTextView = nil;
 static BOOL isWindowHidden = NO;
 
+// ---------- 日志文件保存函数 ----------
+static NSString *get_log_file_path(void) {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *docDir = paths.firstObject;
+    return [docDir stringByAppendingPathComponent:@"md5hook.log"];
+}
+
+static NSString *data_to_hex(NSData *data) {
+    NSMutableString *hex = [NSMutableString string];
+    const unsigned char *bytes = [data bytes];
+
+    for (NSUInteger i = 0; i < data.length; i++) {
+        [hex appendFormat:@"%02x", bytes[i]];
+    }
+    return hex;
+}
+
+static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexStr, NSString *md5) {
+    NSString *logPath = get_log_file_path();
+
+    // 格式化日志条目
+    NSString *entry = [NSString stringWithFormat:
+        @"----------------------------------------\n"
+        @"时间: %@\n"
+        @"长度: %lu\n"
+        @"UTF-8明文:\n%@\n\n"
+        @"Hex明文:\n%@\n\n"
+        @"MD5结果:\n%@\n\n",
+        timestamp,
+        (unsigned long)utf8Str.length,
+        utf8Str,
+        hexStr,
+        md5
+    ];
+
+    // 写入文件（追加模式）
+    NSError *error = nil;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:logPath]) {
+        // 追加内容
+        NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+        [fileHandle seekToEndOfFile];
+        [fileHandle writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+        [fileHandle closeFile];
+    } else {
+        // 创建新文件
+        [entry writeToFile:logPath
+               atomically:YES
+                 encoding:NSUTF8StringEncoding
+                    error:&error];
+    }
+
+    if (error) {
+        NSLog(@"[MD5-HOOK] 写入日志文件失败: %@", error.localizedDescription);
+    }
+}
+
 // ---------- 日志追加函数 ----------
 static void append_log(NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -166,6 +222,15 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
         inputStr = [inputData description];
     }
 
+    NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date]
+                                                           dateStyle:NSDateFormatterNoStyle
+                                                           timeStyle:NSDateFormatterMediumStyle];
+    NSString *hexStr = data_to_hex(inputData);
+
+    // 保存到文件
+    save_to_file(timestamp, inputStr, hexStr, hex);
+
+    // 显示到悬浮窗
     append_log([NSString stringWithFormat:@"IN (len=%u): %@", len, inputStr]);
     append_log([NSString stringWithFormat:@"MD5: %@", hex]);
     append_log(@"───────────────────────────────");
