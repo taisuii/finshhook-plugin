@@ -34,15 +34,6 @@ static void append_log(NSString *message) {
     });
 }
 
-// ---------- 清空日志通知处理 ----------
-static void clear_log(NSNotification *notif) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (logTextView) {
-            logTextView.text = @"";
-        }
-    });
-}
-
 // --------- 拖动支持（UIWindow Category） ---------
 @interface UIWindow (MD5Hook)
 - (void)handlePan:(UIPanGestureRecognizer *)g;
@@ -136,11 +127,15 @@ static void setup_float_window(void) {
         longPressGesture.minimumPressDuration = 0.5;
         [titleBar addGestureRecognizer:longPressGesture];
 
-        // 注册清空日志通知
+        // 注册清空日志通知 - 使用 block
         [[NSNotificationCenter defaultCenter] addObserverForName:@"MD5HookClearLog"
                                                            object:nil
-                                                           queue:[NSOperationQueue mainQueue]
-                                                      usingBlock:clear_log];
+                                                            queue:[NSOperationQueue mainQueue]
+                                                       usingBlock:^(NSNotification *notif) {
+            if (logTextView) {
+                logTextView.text = @"";
+            }
+        }];
 
         // 显示悬浮窗
         floatWindow.hidden = NO;
