@@ -148,6 +148,11 @@ static void setup_float_window(void) {
 
 // ---------- Hook CC_MD5（一次性计算，最常见） ----------
 static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char *md) {
+    // 过滤短输入（低于 48 字节不 Hook）
+    if (len < 48) {
+        return orig_CC_MD5(data, len, md);
+    }
+
     unsigned char *result = orig_CC_MD5(data, len, md);
 
     // 打印明文（截断超长数据）
