@@ -226,12 +226,31 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
                                                        dateStyle:NSDateFormatterNoStyle
                                                        timeStyle:NSDateFormatterMediumStyle];
 
+    // 获取并过滤调用堆栈 - 更准确的方法
     NSArray *stackSymbols = [NSThread callStackSymbols];
     NSMutableString *callStack = [NSMutableString string];
-    for (NSString *symbol in stackSymbols) {
-        if ([symbol containsString:@"/var/mobile/Containers"]) {
-            [callStack appendFormat:@"%@\n", symbol];
+    [callStack appendString:@"完整调用堆栈:\n"];
+
+    int frameCount = 0;
+    for (int i = 0; i < stackSymbols.count; i++) {
+        NSString *symbol = stackSymbols[i];
+        // 过滤掉系统框架和我们自己的dylib
+        if ([symbol containsString:@"fishhook"] ||
+            [symbol containsString:@"hook_md5"] ||
+            [symbol containsString:@"CoreFoundation"] ||
+            [symbol containsString:@"libsystem"] ||
+            [symbol containsString:@"libdispatch"] ||
+            [symbol containsString:@"UIKit"] ||
+            [symbol containsString:@"Foundation"]) {
+            continue;
         }
+        [callStack appendFormat:@"  [%2d] %@\n", frameCount++, symbol];
+        // 只显示前20个关键栈帧
+        if (frameCount >= 20) break;
+    }
+
+    if (frameCount == 0) {
+        [callStack appendString:@"  (无应用相关调用)\n"];
     }
 
     save_to_file(timestamp, inputStr, hexStr, hex, inputData, callStack);
