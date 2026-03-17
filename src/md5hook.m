@@ -44,12 +44,13 @@ static void clear_log(NSNotification *notif) {
 }
 
 // --------- 拖动支持（UIWindow Category） ---------
-@interface UIWindow (Draggable)
+@interface UIWindow (MD5Hook)
 - (void)handlePan:(UIPanGestureRecognizer *)g;
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g;
+- (void)clearLog;
 @end
 
-@implementation UIWindow (Draggable)
+@implementation UIWindow (MD5Hook)
 - (void)handlePan:(UIPanGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateChanged) {
         CGPoint delta = [g translationInView:self.superview ?: self];
@@ -66,6 +67,10 @@ static void clear_log(NSNotification *notif) {
             self.alpha = isWindowHidden ? 0.1 : 1.0;
         }];
     }
+}
+
+- (void)clearLog {
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"MD5HookClearLog" object:nil];
 }
 @end
 
@@ -145,16 +150,6 @@ static void setup_float_window(void) {
     });
 }
 
-// UIWindow 分类补充 clearLog 方法
-@interface UIWindow (MD5Hook)
-- (void)clearLog;
-@end
-
-@implementation UIWindow (MD5Hook)
-- (void)clearLog {
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"MD5HookClearLog" object:nil];
-}
-@end
 
 // ---------- Hook CC_MD5（一次性计算，最常见） ----------
 static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char *md) {
