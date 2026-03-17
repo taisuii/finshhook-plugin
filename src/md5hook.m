@@ -1,11 +1,160 @@
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <UIKit/UIKit.h>
 #import "fishhook.h"
 
 // 保存原始函数指针
 static unsigned char *(*orig_CC_MD5)(const void *data, CC_LONG len, unsigned char *md);
 static CC_LONG       (*orig_CC_MD5_Update)(CC_MD5_CTX *c, const void *data, CC_LONG len);
 static int           (*orig_CC_MD5_Final)(unsigned char *md, CC_MD5_CTX *c);
+
+// ---------- 悬浮窗全局变量 ----------
+static UIWindow *floatWindow = nil;
+static UITextView *logTextView = nil;
+static BOOL isWindowHidden = NO;
+
+// ---------- 日志追加函数 ----------
+static void append_log(NSString *message) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!logTextView) return;
+
+        NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date]
+                                                               dateStyle:NSDateFormatterNoStyle
+                                                               timeStyle:NSDateFormatterMediumStyle];
+        NSString *fullMessage = [NSString stringWithFormat:@"[%@] %@\n", timestamp, message];
+
+        logTextView.text = [logTextView.text stringByAppendingString:fullMessage];
+        NSLog(@"[MD5-HOOK] %@", message);
+
+        // 自动滚动到底部
+        if (logTextView.text.length > 0) {
+            NSRange bottom = NSMakeRange(logTextView.text.length - 1, 1);
+            [logTextView scrollRangeToVisible:bottom];
+        }
+    });
+}
+
+// ---------- 清空日志通知处理 ----------
+static void clear_log(NSNotification *notif) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (logTextView) {
+            logTextView.text = @"";
+        }
+    });
+}
+
+// --------- 拖动支持（UIWindow Category） ---------
+@interface UIWindow (Draggable)
+- (void)handlePan:(UIPanGestureRecognizer *)g;
+- (void)handleLongPress:(UILongPressGestureRecognizer *)g;
+@end
+
+@implementation UIWindow (Draggable)
+- (void)handlePan:(UIPanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateChanged) {
+        CGPoint delta = [g translationInView:self.superview ?: self];
+        self.center = CGPointMake(self.center.x + delta.x,
+                                  self.center.y + delta.y);
+        [g setTranslation:CGPointZero inView:self.superview ?: self];
+    }
+}
+
+- (void)handleLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) {
+        isWindowHidden = !isWindowHidden;
+        [UIView animateWithDuration:0.3 animations:^{
+            self.alpha = isWindowHidden ? 0.1 : 1.0;
+        }];
+    }
+}
+@end
+
+// ---------- 设置悬浮窗 ----------
+static void setup_float_window(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (floatWindow) return;
+
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        CGFloat windowWidth = MIN(screenBounds.size.width, 360);
+        CGFloat windowHeight = MIN(screenBounds.size.height * 0.4, 320);
+        CGFloat windowX = screenBounds.size.width - windowWidth - 10;
+        CGFloat windowY = 100;
+
+        // 创建悬浮窗
+        floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(windowX, windowY, windowWidth, windowHeight)];
+        floatWindow.windowLevel = UIWindowLevelAlert + 1000;
+        floatWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
+        floatWindow.layer.cornerRadius = 10;
+        floatWindow.layer.masksToBounds = YES;
+        floatWindow.layer.borderWidth = 1;
+        floatWindow.layer.borderColor = [[UIColor colorWithWhite:0.3 alpha:1.0] CGColor];
+
+        // 添加标题栏
+        UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, windowWidth, 40)];
+        titleBar.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+        [floatWindow addSubview:titleBar];
+
+        // 标题标签
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 180, 30)];
+        titleLabel.text = @"🔑 MD5 Hook";
+        titleLabel.textColor = [UIColor greenColor];
+        titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [titleBar addSubview:titleLabel];
+
+        // 清空按钮
+        UIButton *clearButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        clearButton.frame = CGRectMake(windowWidth - 70, 5, 60, 30);
+        [clearButton setTitle:@"清空" forState:UIControlStateNormal];
+        [clearButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        clearButton.titleLabel.font = [UIFont systemFontOfSize:12];
+        clearButton.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
+        clearButton.layer.cornerRadius = 5;
+        [clearButton addTarget:floatWindow action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
+        [titleBar addSubview:clearButton];
+
+        // 日志文本视图
+        logTextView = [[UITextView alloc] initWithFrame:CGRectMake(5, 45, windowWidth - 10, windowHeight - 50)];
+        logTextView.backgroundColor = [UIColor clearColor];
+        logTextView.textColor = [UIColor greenColor];
+        logTextView.font = [UIFont fontWithName:@"Menlo" size:11];
+        logTextView.editable = NO;
+        logTextView.selectable = YES;
+        logTextView.textContainerInset = UIEdgeInsetsMake(5, 5, 5, 5);
+        [floatWindow addSubview:logTextView];
+
+        // 添加拖动手势
+        UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:floatWindow action:@selector(handlePan:)];
+        [titleBar addGestureRecognizer:panGesture];
+
+        // 添加长按手势（隐藏/显示）
+        UILongPressGestureRecognizer *longPressGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:floatWindow action:@selector(handleLongPress:)];
+        longPressGesture.minimumPressDuration = 0.5;
+        [titleBar addGestureRecognizer:longPressGesture];
+
+        // 注册清空日志通知
+        [[NSNotificationCenter defaultCenter] addObserverForName:@"MD5HookClearLog"
+                                                           object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:clear_log];
+
+        // 显示悬浮窗
+        floatWindow.hidden = NO;
+
+        append_log(@"悬浮窗已启动 ✓");
+        append_log(@"提示: 拖动标题栏移动位置, 长按标题栏隐藏/显示");
+    });
+}
+
+// UIWindow 分类补充 clearLog 方法
+@interface UIWindow (MD5Hook)
+- (void)clearLog;
+@end
+
+@implementation UIWindow (MD5Hook)
+- (void)clearLog {
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"MD5HookClearLog" object:nil];
+}
+@end
 
 // ---------- Hook CC_MD5（一次性计算，最常见） ----------
 static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char *md) {
@@ -17,9 +166,14 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", md[i]];
 
-    NSLog(@"[MD5-HOOK] Input  (len=%u): %@", len,
-          [[NSString alloc] initWithData:inputData encoding:NSUTF8StringEncoding] ?: inputData);
-    NSLog(@"[MD5-HOOK] Digest : %@", hex);
+    NSString *inputStr = [[NSString alloc] initWithData:inputData encoding:NSUTF8StringEncoding];
+    if (!inputStr) {
+        inputStr = [inputData description];
+    }
+
+    append_log([NSString stringWithFormat:@"IN (len=%u): %@", len, inputStr]);
+    append_log([NSString stringWithFormat:@"MD5: %@", hex]);
+    append_log(@"───────────────────────────────");
 
     return result;
 }
@@ -27,7 +181,7 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
 // ---------- Hook CC_MD5_Update（流式计算） ----------
 static CC_LONG hooked_CC_MD5_Update(CC_MD5_CTX *c, const void *data, CC_LONG len) {
     NSData *chunk = [NSData dataWithBytes:data length:MIN(len, 256)];
-    NSLog(@"[MD5-HOOK] Update chunk (len=%u): %@", len, chunk);
+    append_log([NSString stringWithFormat:@"Update chunk (len=%u): %@", len, chunk]);
     return orig_CC_MD5_Update(c, data, len);
 }
 
@@ -37,7 +191,8 @@ static int hooked_CC_MD5_Final(unsigned char *md, CC_MD5_CTX *c) {
     NSMutableString *hex = [NSMutableString string];
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", md[i]];
-    NSLog(@"[MD5-HOOK] Final  Digest: %@", hex);
+    append_log([NSString stringWithFormat:@"Final MD5: %@", hex]);
+    append_log(@"───────────────────────────────");
     return ret;
 }
 
@@ -49,5 +204,9 @@ static void hook_init(void) {
         {"CC_MD5_Update", hooked_CC_MD5_Update,  (void **)&orig_CC_MD5_Update},
         {"CC_MD5_Final",  hooked_CC_MD5_Final,   (void **)&orig_CC_MD5_Final},
     }, 3);
+
     NSLog(@"[MD5-HOOK] fishhook 注入成功 ✓");
+
+    // 设置悬浮窗
+    setup_float_window();
 }

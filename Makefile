@@ -9,6 +9,7 @@ CFLAGS  := -arch $(ARCH) \
            -miphoneos-version-min=14.0 \
            -dynamiclib \
            -framework Foundation \
+           -framework UIKit \
            -ObjC \
            -Os
 
