@@ -303,8 +303,8 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
 
     unsigned char *result = orig_CC_MD5(data, len, md);
 
-    // 打印明文（截断超长数据）
-    NSData  *inputData  = [NSData dataWithBytes:data length:MIN(len, 256)];
+    // 打印明文（保留完整数据）
+    NSData  *inputData  = [NSData dataWithBytes:data length:len];
     NSMutableString *hex = [NSMutableString string];
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", md[i]];
