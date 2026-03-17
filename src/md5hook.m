@@ -33,23 +33,64 @@ static NSString *data_to_hex(NSData *data) {
     return hex;
 }
 
-static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexStr, NSString *md5) {
+// 生成 HexDump 格式的字符串
+static NSString *hex_dump_format(NSData *data) {
+    if (!data) return @"";
+
+    NSMutableString *result = [NSMutableString string];
+    const unsigned char *bytes = [data bytes];
+    NSUInteger len = data.length;
+
+    for (NSUInteger offset = 0; offset < len; offset += 16) {
+        // 地址部分
+        [result appendFormat:@"%04lx: ", (unsigned long)offset];
+
+        // Hex 部分
+        for (NSUInteger i = 0; i < 16; i++) {
+            if (offset + i < len) {
+                [result appendFormat:@"%02x ", bytes[offset + i]];
+            } else {
+                [result appendString:@"   "];
+            }
+            if (i == 7) [result appendString:@" "];
+        }
+
+        [result appendString:@" |"];
+
+        // ASCII 部分
+        for (NSUInteger i = 0; i < 16; i++) {
+            if (offset + i < len) {
+                unsigned char c = bytes[offset + i];
+                if (c >= 32 && c < 127) {
+                    [result appendFormat:@"%c", c];
+                } else {
+                    [result appendString:@"."];
+                }
+            }
+        }
+
+        [result appendString:@"|\n"];
+    }
+
+    return result;
+}
+
+static void save_to_file(NSString *timestamp, NSString *utf8Str, NSString *hexStr, NSString *md5, NSData *inputData) {
     NSString *logPath = get_log_file_path();
 
     // 格式化日志条目
-    NSString *entry = [NSString stringWithFormat:
-        @"----------------------------------------\n"
-        @"时间: %@\n"
-        @"长度: %lu\n"
-        @"UTF-8明文:\n%@\n\n"
-        @"Hex明文:\n%@\n\n"
-        @"MD5结果:\n%@\n\n",
-        timestamp,
-        (unsigned long)utf8Str.length,
-        utf8Str,
-        hexStr,
-        md5
-    ];
+    NSMutableString *entry = [NSMutableString string];
+    [entry appendString:@"----------------------------------------\n"];
+    [entry appendFormat:@"时间: %@\n", timestamp];
+    [entry appendFormat:@"长度: %lu\n", (unsigned long)inputData.length];
+    [entry appendString:@"\nUTF-8明文:\n"];
+    [entry appendFormat:@"%@\n\n", utf8Str];
+    [entry appendString:@"Hex (连续):\n"];
+    [entry appendFormat:@"%@\n\n", hexStr];
+    [entry appendString:@"HexDump (格式):\n"];
+    [entry appendFormat:@"%@\n", hex_dump_format(inputData)];
+    [entry appendString:@"MD5结果:\n"];
+    [entry appendFormat:@"%@\n\n", md5];
 
     // 写入文件（追加模式）
     NSError *error = nil;
@@ -268,18 +309,21 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", md[i]];
 
+    // 处理UTF-8解码和Hex格式
     NSString *inputStr = [[NSString alloc] initWithData:inputData encoding:NSUTF8StringEncoding];
+    NSString *hexStr = data_to_hex(inputData);
+
+    // 如果UTF-8解码失败，显示Hex格式作为主要显示
     if (!inputStr) {
-        inputStr = [inputData description];
+        inputStr = hexStr;
     }
 
     NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date]
                                                            dateStyle:NSDateFormatterNoStyle
                                                            timeStyle:NSDateFormatterMediumStyle];
-    NSString *hexStr = data_to_hex(inputData);
 
     // 始终保存到文件（即使暂停也保存）
-    save_to_file(timestamp, inputStr, hexStr, hex);
+    save_to_file(timestamp, inputStr, hexStr, hex, inputData);
 
     // 只有未暂停时才显示到悬浮窗
     if (!isPaused) {
