@@ -12,6 +12,9 @@ static int           (*orig_CC_MD5_Final)(unsigned char *md, CC_MD5_CTX *c);
 static UIWindow *floatWindow = nil;
 static UITextView *logTextView = nil;
 static BOOL isWindowHidden = NO;
+static BOOL isPaused = NO;
+static UILabel *statusLabel = nil;
+static UIButton *pauseButton = nil;
 
 // ---------- 日志文件保存函数 ----------
 static NSString *get_log_file_path(void) {
@@ -82,8 +85,8 @@ static void append_log(NSString *message) {
         logTextView.text = [logTextView.text stringByAppendingString:fullMessage];
         NSLog(@"[MD5-HOOK] %@", message);
 
-        // 自动滚动到底部
-        if (logTextView.text.length > 0) {
+        // 只有在未暂停时才自动滚动
+        if (!isPaused && logTextView.text.length > 0) {
             NSRange bottom = NSMakeRange(logTextView.text.length - 1, 1);
             [logTextView scrollRangeToVisible:bottom];
         }
@@ -95,6 +98,7 @@ static void append_log(NSString *message) {
 - (void)handlePan:(UIPanGestureRecognizer *)g;
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g;
 - (void)clearLog;
+- (void)togglePause;
 @end
 
 @implementation UIWindow (MD5Hook)
@@ -119,6 +123,24 @@ static void append_log(NSString *message) {
 - (void)clearLog {
     [[NSNotificationCenter defaultCenter] postNotificationName:@"MD5HookClearLog" object:nil];
 }
+
+- (void)togglePause {
+    isPaused = !isPaused;
+    if (pauseButton) {
+        [pauseButton setTitle:isPaused ? @"继续" : @"暂停" forState:UIControlStateNormal];
+        pauseButton.backgroundColor = isPaused ?
+            [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1.0] :
+            [UIColor colorWithRed:0.6 green:0.4 blue:0.2 alpha:1.0];
+    }
+    if (statusLabel) {
+        statusLabel.text = isPaused ? @"⏸️ 已暂停" : @"▶️ 运行中";
+    }
+    if (isPaused) {
+        append_log(@"日志已暂停 - 文件仍在保存中");
+    } else {
+        append_log(@"日志已继续");
+    }
+}
 @end
 
 // ---------- 设置悬浮窗 ----------
@@ -127,48 +149,76 @@ static void setup_float_window(void) {
         if (floatWindow) return;
 
         CGRect screenBounds = [UIScreen mainScreen].bounds;
-        CGFloat windowWidth = MIN(screenBounds.size.width, 360);
-        CGFloat windowHeight = MIN(screenBounds.size.height * 0.4, 320);
+        CGFloat windowWidth = MIN(screenBounds.size.width, 380);
+        CGFloat windowHeight = MIN(screenBounds.size.height * 0.45, 360);
         CGFloat windowX = screenBounds.size.width - windowWidth - 10;
         CGFloat windowY = 100;
 
         // 创建悬浮窗
         floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(windowX, windowY, windowWidth, windowHeight)];
         floatWindow.windowLevel = UIWindowLevelAlert + 1000;
-        floatWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
-        floatWindow.layer.cornerRadius = 10;
+        floatWindow.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.95];
+        floatWindow.layer.cornerRadius = 12;
         floatWindow.layer.masksToBounds = YES;
         floatWindow.layer.borderWidth = 1;
-        floatWindow.layer.borderColor = [[UIColor colorWithWhite:0.3 alpha:1.0] CGColor];
+        floatWindow.layer.borderColor = [[UIColor colorWithWhite:0.25 alpha:1.0] CGColor];
 
         // 添加标题栏
-        UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, windowWidth, 40)];
-        titleBar.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+        UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, windowWidth, 50)];
+        titleBar.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
         [floatWindow addSubview:titleBar];
 
         // 标题标签
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 180, 30)];
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 140, 20)];
         titleLabel.text = @"🔑 MD5 Hook";
         titleLabel.textColor = [UIColor greenColor];
-        titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        titleLabel.font = [UIFont boldSystemFontOfSize:13];
         [titleBar addSubview:titleLabel];
+
+        // 状态标签（显示文件路径和运行状态）
+        statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 25, windowWidth - 20, 20)];
+        statusLabel.text = @"▶️ 运行中";
+        statusLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+        statusLabel.font = [UIFont systemFontOfSize:9];
+        [titleBar addSubview:statusLabel];
+
+        // 暂停按钮
+        pauseButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        pauseButton.frame = CGRectMake(windowWidth - 150, 5, 45, 20);
+        [pauseButton setTitle:@"暂停" forState:UIControlStateNormal];
+        [pauseButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        pauseButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+        pauseButton.backgroundColor = [UIColor colorWithRed:0.6 green:0.4 blue:0.2 alpha:1.0];
+        pauseButton.layer.cornerRadius = 4;
+        [pauseButton addTarget:floatWindow action:@selector(togglePause) forControlEvents:UIControlEventTouchUpInside];
+        [titleBar addSubview:pauseButton];
 
         // 清空按钮
         UIButton *clearButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        clearButton.frame = CGRectMake(windowWidth - 70, 5, 60, 30);
+        clearButton.frame = CGRectMake(windowWidth - 100, 5, 45, 20);
         [clearButton setTitle:@"清空" forState:UIControlStateNormal];
         [clearButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        clearButton.titleLabel.font = [UIFont systemFontOfSize:12];
+        clearButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
         clearButton.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
-        clearButton.layer.cornerRadius = 5;
+        clearButton.layer.cornerRadius = 4;
         [clearButton addTarget:floatWindow action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
         [titleBar addSubview:clearButton];
 
+        // 路径标签 - 显示在悬浮窗底部
+        NSString *logPath = get_log_file_path();
+        UILabel *pathLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, windowHeight - 20, windowWidth - 10, 15)];
+        pathLabel.text = [NSString stringWithFormat:@"📁 %@", logPath];
+        pathLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
+        pathLabel.font = [UIFont fontWithName:@"Menlo" size:8];
+        pathLabel.adjustsFontSizeToFitWidth = YES;
+        pathLabel.minimumScaleFactor = 0.5;
+        [floatWindow addSubview:pathLabel];
+
         // 日志文本视图
-        logTextView = [[UITextView alloc] initWithFrame:CGRectMake(5, 45, windowWidth - 10, windowHeight - 50)];
+        logTextView = [[UITextView alloc] initWithFrame:CGRectMake(5, 55, windowWidth - 10, windowHeight - 80)];
         logTextView.backgroundColor = [UIColor clearColor];
         logTextView.textColor = [UIColor greenColor];
-        logTextView.font = [UIFont fontWithName:@"Menlo" size:11];
+        logTextView.font = [UIFont fontWithName:@"Menlo" size:10];
         logTextView.editable = NO;
         logTextView.selectable = YES;
         logTextView.textContainerInset = UIEdgeInsetsMake(5, 5, 5, 5);
@@ -197,7 +247,8 @@ static void setup_float_window(void) {
         floatWindow.hidden = NO;
 
         append_log(@"悬浮窗已启动 ✓");
-        append_log(@"提示: 拖动标题栏移动位置, 长按标题栏隐藏/显示");
+        append_log(@"提示: 拖动标题栏移动, 长按隐藏, 暂停可防止刷屏");
+        append_log([NSString stringWithFormat:@"日志文件: %@", logPath]);
     });
 }
 
@@ -227,13 +278,16 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
                                                            timeStyle:NSDateFormatterMediumStyle];
     NSString *hexStr = data_to_hex(inputData);
 
-    // 保存到文件
+    // 始终保存到文件（即使暂停也保存）
     save_to_file(timestamp, inputStr, hexStr, hex);
 
-    // 显示到悬浮窗
-    append_log([NSString stringWithFormat:@"IN (len=%u): %@", len, inputStr]);
-    append_log([NSString stringWithFormat:@"MD5: %@", hex]);
-    append_log(@"───────────────────────────────");
+    // 只有未暂停时才显示到悬浮窗
+    if (!isPaused) {
+        append_log([NSString stringWithFormat:@"IN UTF-8 (len=%u): %@", len, inputStr]);
+        append_log([NSString stringWithFormat:@"IN HEX   (len=%u): %@", len, hexStr]);
+        append_log([NSString stringWithFormat:@"MD5 RESULT: %@", hex]);
+        append_log(@"───────────────────────────────");
+    }
 
     return result;
 }
@@ -241,7 +295,9 @@ static unsigned char *hooked_CC_MD5(const void *data, CC_LONG len, unsigned char
 // ---------- Hook CC_MD5_Update（流式计算） ----------
 static CC_LONG hooked_CC_MD5_Update(CC_MD5_CTX *c, const void *data, CC_LONG len) {
     NSData *chunk = [NSData dataWithBytes:data length:MIN(len, 256)];
-    append_log([NSString stringWithFormat:@"Update chunk (len=%u): %@", len, chunk]);
+    if (!isPaused) {
+        append_log([NSString stringWithFormat:@"Update chunk (len=%u): %@", len, chunk]);
+    }
     return orig_CC_MD5_Update(c, data, len);
 }
 
@@ -251,8 +307,10 @@ static int hooked_CC_MD5_Final(unsigned char *md, CC_MD5_CTX *c) {
     NSMutableString *hex = [NSMutableString string];
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", md[i]];
-    append_log([NSString stringWithFormat:@"Final MD5: %@", hex]);
-    append_log(@"───────────────────────────────");
+    if (!isPaused) {
+        append_log([NSString stringWithFormat:@"Final MD5: %@", hex]);
+        append_log(@"───────────────────────────────");
+    }
     return ret;
 }
 
